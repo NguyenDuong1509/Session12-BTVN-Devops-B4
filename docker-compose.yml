@@ -1,0 +1,24 @@
+version: '3'
+services:
+  backend:
+    image: my-spring-boot-app:latest
+    ports:
+      - "127.0.0.1:8080:8080"
+    # FIX: Bind chỉ vào localhost (127.0.0.1) thay vì 0.0.0.0
+    # → Port 8080 chỉ lắng nghe trên loopback interface
+    # → Chỉ Nginx (cùng máy) mới proxy được vào localhost:8080
+    # → Mọi request từ internet đến cổng 8080 đều bị từ chối
+    restart: unless-stopped
+
+  # Nginx reverse proxy (nếu chạy trong Docker)
+  # Nếu Nginx cài trực tiếp trên host, bỏ service này
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "0.0.0.0:80:80"    # Port 80 public - đúng, đây là ingress
+      - "0.0.0.0:443:443"  # Port 443 public - đúng, HTTPS
+    volumes:
+      - ./nginx/sites-available/app.conf:/etc/nginx/conf.d/app.conf:ro
+    depends_on:
+      - backend
+    restart: unless-stopped

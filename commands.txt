@@ -1,0 +1,64 @@
+====================================================
+SESSION 12 - BÀI TẬP 4: TÍCH HỢP UFW VÀ DOCKER
+====================================================
+
+## VẤN ĐỀ: Docker Bypass UFW qua iptables
+
+UFW (Uncomplicated Firewall) quản lý tường lửa bằng iptables.
+Docker cũng thao tác trực tiếp với iptables để thực hiện port mapping.
+Docker chèn rules vào chain DOCKER trước cả chain UFW → Docker THẮNG.
+
+Kết quả: Dù bạn chạy "sudo ufw deny 8080", cổng 8080 vẫn public!
+
+## NGUYÊN NHÂN KỸ THUẬT
+
+Khi Docker thấy:
+  ports:
+    - "8080:8080"
+
+Nó tương đương:
+  ports:
+    - "0.0.0.0:8080:8080"
+
+Docker tạo iptables rule:
+  -A DOCKER -d 0.0.0.0/0 -p tcp --dport 8080 -j ACCEPT
+
+Rule này nằm TRƯỚC chain ufw-before-input → UFW không có cơ hội chặn.
+
+## GIẢI PHÁP: Bind vào localhost
+
+Thay đổi:
+  "8080:8080"           → "0.0.0.0:8080:8080" (BAD - public)
+  "127.0.0.1:8080:8080"                        (GOOD - localhost only)
+
+Khi bind vào 127.0.0.1:
+- Docker tạo rule chỉ ACCEPT từ 127.0.0.1
+- Từ internet đến VPS:8080 → kernel từ chối ngay tại network stack
+- Nginx (cùng máy) proxy đến 127.0.0.1:8080 → hoạt động bình thường
+
+## LỆNH THỰC HIỆN
+
+# 1. Xem trạng thái UFW
+sudo ufw status verbose
+
+# 2. Chạy container với port cũ (vấn đề)
+docker compose -f docker-compose.old.yml up -d
+# Test từ bên ngoài: curl http://VPS_IP:8080 → THÀNH CÔNG (sai!)
+
+# 3. Dừng và sửa docker-compose.yml
+docker compose down
+
+# 4. Chạy với fix mới
+docker compose up -d
+# Test từ bên ngoài: curl http://VPS_IP:8080 → THẤT BẠI (đúng!)
+# Test qua Nginx:   curl http://VPS_IP:80   → THÀNH CÔNG (đúng!)
+
+# 5. Kiểm tra port binding
+docker compose ps
+# Backend: 127.0.0.1:8080->8080/tcp ← chỉ localhost
+# Nginx:   0.0.0.0:80->80/tcp       ← public (đúng)
+# Nginx:   0.0.0.0:443->443/tcp     ← public (đúng)
+
+# 6. Kiểm tra iptables rule
+sudo iptables -L DOCKER -n | grep 8080
+# Chỉ thấy rule cho 127.0.0.1, không có 0.0.0.0
